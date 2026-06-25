@@ -9,7 +9,6 @@
 AnomX-SoC-26/
 ├── Week - 1,2
     ├──prac.py
-├── README.md
 ├── Week - 3/
 │   ├── generate_events.py
 │   └── data/
@@ -18,6 +17,7 @@ AnomX-SoC-26/
     ├── feature_engineering.py
     └── data/
         └── features.csv
+├── README.md
 ```
 
 ---
