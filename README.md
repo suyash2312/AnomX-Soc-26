@@ -7,6 +7,8 @@
 
 ```
 AnomX-SoC-26/
+├── Week - 1,2
+    ├──prac.py
 ├── README.md
 ├── Week - 3/
 │   ├── generate_events.py
