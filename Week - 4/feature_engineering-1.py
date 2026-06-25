@@ -2,16 +2,14 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
 RAW_PATH = BASE_DIR / "data" / "events.csv"
 OUT_PATH = BASE_DIR / "data" / "features.csv"
 
-# ── Rolling windows ───────────────────────────────────────────────────────────
+
 ROLLING_WINDOWS = [5, 10]
 
 
-# ── Helper: safe per-user z-score ─────────────────────────────────────────────
 def _safe_zscore(series: pd.Series) -> pd.Series:
 
     std = series.std()
@@ -20,7 +18,6 @@ def _safe_zscore(series: pd.Series) -> pd.Series:
     return (series - series.mean()) / std
 
 
-# ── Helper: time since last occurrence of a specific event type ───────────────
 def _time_since_etype(group: pd.DataFrame, etype: str) -> pd.Series:
 
     mask = group["event_type"] == etype
@@ -29,7 +26,6 @@ def _time_since_etype(group: pd.DataFrame, etype: str) -> pd.Series:
     return delta
 
 
-# ── Helper: burst count ───────────────────────────────────────────────────────
 def _burst_count(group: pd.DataFrame, window_min: int) -> pd.Series:
 
     ts_list = group["timestamp"].tolist()
@@ -40,7 +36,6 @@ def _burst_count(group: pd.DataFrame, window_min: int) -> pd.Series:
     return pd.Series(counts, index=group.index)
 
 
-# ── Feature group 1: Time-delta features ─────────────────────────────────────
 def build_time_features(df: pd.DataFrame) -> pd.DataFrame:
 
     print("  [1/9] Time-delta features...")
@@ -60,7 +55,6 @@ def build_time_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Feature group 2: Rolling trade features ───────────────────────────────────
 def build_rolling_trade_features(df: pd.DataFrame) -> pd.DataFrame:
 
     print("  [2/9] Rolling trade features...")
@@ -74,7 +68,7 @@ def build_rolling_trade_features(df: pd.DataFrame) -> pd.DataFrame:
             ("pnl", "mean"),
             ("margin_used", "mean"),
         ]:
-            # build a readable column name
+
             short = col.replace("_volume", "_vol").replace("_used", "")
             feat = f"roll_{w}_{short}_{agg}"
             rolled = (
@@ -83,12 +77,11 @@ def build_rolling_trade_features(df: pd.DataFrame) -> pd.DataFrame:
                 .agg(agg)
                 .reset_index(level=0, drop=True)
             )
-            df[feat] = rolled  # index-based assignment avoids _x/_y conflicts
+            df[feat] = rolled
 
     return df
 
 
-# ── Feature group 3: Rolling session features ─────────────────────────────────
 def build_rolling_session_features(df: pd.DataFrame) -> pd.DataFrame:
 
     print("  [3/9] Rolling session features...")
@@ -111,7 +104,6 @@ def build_rolling_session_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Feature group 4: Burst count features ────────────────────────────────────
 def build_burst_features(df: pd.DataFrame) -> pd.DataFrame:
 
     print("  [4/9] Burst count features...")
@@ -125,14 +117,12 @@ def build_burst_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Feature group 5: Login anomaly features ───────────────────────────────────
 def build_login_features(df: pd.DataFrame) -> pd.DataFrame:
 
     print("  [5/9] Login anomaly features...")
 
     login_df = df[df["event_type"] == "login"].copy()
 
-    # Encode string columns as integers for rolling nunique
     for col, feat in [
         ("ip_address", "unique_ips_last_10_logins"),
         ("country", "unique_countries_last_10_logins"),
@@ -149,7 +139,6 @@ def build_login_features(df: pd.DataFrame) -> pd.DataFrame:
         )
         df[feat] = rolled
 
-    # Rolling sum of failed attempts over last 5 logins
     df["rolling_failed_attempts_5"] = (
         login_df.groupby("user_id")["failed_attempts"]
         .rolling(5, min_periods=1)
@@ -157,7 +146,6 @@ def build_login_features(df: pd.DataFrame) -> pd.DataFrame:
         .reset_index(level=0, drop=True)
     )
 
-    # Rolling avg timezone gap — uses timezone_gap_hours column from our events.csv
     df["rolling_timezone_gap_5"] = (
         login_df.groupby("user_id")["timezone_gap_hours"]
         .rolling(5, min_periods=1)
@@ -168,14 +156,12 @@ def build_login_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Feature group 6: Financial ratio features ─────────────────────────────────
 def build_financial_features(df: pd.DataFrame) -> pd.DataFrame:
 
     print("  [6/9] Financial ratio features...")
 
     fin_df = df[df["event_type"].isin(["deposit", "withdrawal"])].copy()
 
-    # Rolling deposit sum (computed on deposit rows, forward filled to withdrawal rows)
     dep_roll = (
         fin_df[fin_df["event_type"] == "deposit"]
         .groupby("user_id")["amount"]
@@ -189,14 +175,12 @@ def build_financial_features(df: pd.DataFrame) -> pd.DataFrame:
         fin_df.groupby("user_id")["roll_5_deposit_sum"].ffill().fillna(0)
     )
 
-    # Withdrawal to deposit ratio — capped at 10
     fin_df["withdrawal_to_deposit_ratio"] = np.where(
         fin_df["event_type"] == "withdrawal",
         (fin_df["amount"] / (fin_df["roll_5_deposit_sum"] + 1e-9)).clip(upper=10),
         0.0,
     )
 
-    # Rolling sum of is_immediate_withdrawal over last 5 financial events
     imm_roll = (
         fin_df.groupby("user_id")["is_immediate_withdrawal"]
         .rolling(5, min_periods=1)
@@ -213,7 +197,6 @@ def build_financial_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Feature group 7: Structurer features ─────────────────────────────────────
 def build_structurer_features(df: pd.DataFrame) -> pd.DataFrame:
 
     print("  [7/9] Structurer features...")
@@ -244,19 +227,16 @@ def build_structurer_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Feature group 8: Dormant withdrawer features ──────────────────────────────
 def build_dormant_features(df: pd.DataFrame) -> pd.DataFrame:
 
     print("  [8/9] Dormant withdrawer features...")
 
-    # withdrawal amount vs account age — only meaningful on withdrawal rows
     df["withdrawal_amount_vs_account_age"] = np.where(
         df["event_type"] == "withdrawal",
         df["amount"] / (df["account_age_days"] + 1),
         0.0,
     )
 
-    # large withdrawal flag: amount > 5000 and event is withdrawal
     df["is_large_withdrawal"] = np.where(
         (df["event_type"] == "withdrawal") & (df["amount"] > 5000), 1, 0
     )
@@ -264,7 +244,6 @@ def build_dormant_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Feature group 9: Z-score features ────────────────────────────────────────
 def build_zscore_features(df: pd.DataFrame) -> pd.DataFrame:
 
     print("  [9/9] Z-score features...")
@@ -282,7 +261,6 @@ def build_zscore_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Main pipeline ─────────────────────────────────────────────────────────────
 def run_feature_pipeline():
     print(f"Loading raw data from {RAW_PATH}...")
     df = pd.read_csv(RAW_PATH)
@@ -303,7 +281,6 @@ def run_feature_pipeline():
     df = build_dormant_features(df)
     df = build_zscore_features(df)
 
-    # Fill NaN with 0 — NaN means no events of that type yet for this user
     new_cols = [c for c in df.columns if c not in orig_cols]
     df[new_cols] = df[new_cols].fillna(0)
 
