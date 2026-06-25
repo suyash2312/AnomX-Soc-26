@@ -25,7 +25,7 @@ AnomX-SoC-26/
 ## Week 1-2: Python, Git & Foundations
 
 ### Python Basics
-Covered the basics needed for this project — data types, loops, functions, and how to work with libraries like pandas and numpy. Most of this was already familiar but going through it properly helped understand how the data pipeline is structured.
+Covered the basics needed for this project : data types, loops, functions, and how to work with libraries like pandas and numpy. Most of this was already familiar but going through it properly helped understand how the data pipeline is structured.
 
 ### Git & GitHub
 Learned how to use git for version control. The basic workflow I followed throughout this project:
@@ -34,7 +34,7 @@ git add .
 git commit -m "message"
 git push origin main
 ```
-Key thing I understood — commits should be small and meaningful, not one big dump at the end.
+Key thing I understood , commits should be small and meaningful, not one big dump at the end.
 
 ### Pandas and NumPy
 These are used everywhere in this project:
