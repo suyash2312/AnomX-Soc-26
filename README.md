@@ -3,6 +3,7 @@
 
 ---
 Video Link : https://drive.google.com/file/d/1v3OgduzZ0G1e0YkNZr6CwSUBE-CzJpN9/view?usp=sharing
+
 ## Repository Structure
 
 ```
@@ -189,5 +190,222 @@ One thing I noticed — `withdrawal_to_deposit_ratio` in the reference implement
 
 ---
 
-*Mentor: Sugandh Kumar | SoC 2026*
+## Week 5-6: Isolation Forest
 
+### How it works
+Isolation Forest is an unsupervised anomaly detection algorithm. The idea is simple — anomalous points are rare and different, so they are easy to isolate from the rest of the data. The algorithm builds random decision trees and keeps splitting the data until each point is alone. The number of splits needed to isolate a point is called its path length.
+
+Short path length = isolated quickly = likely anomalous. Long path length = hard to isolate = likely normal.
+
+This is averaged across all trees to get a final anomaly score.
+
+### Why unsupervised?
+In real fraud detection you usually don't have labels for every event. Isolation Forest doesn't need labels — it just learns what normal looks like and flags anything that doesn't fit. This is more realistic than a supervised model that needs labelled data to train on.
+
+### Implementation — `models/isolation_forest.py`
+The script loads `features.csv`, drops identifier columns like `user_id` and `timestamp`, scales everything with StandardScaler, and trains the model with these settings:
+
+- `n_estimators = 200` — more trees = more stable scores
+- `contamination = 0.15` — tells the model roughly 15% of events are anomalous
+- `random_state = 42` — for reproducibility
+
+### Threshold
+Instead of using sklearn's default contamination-based threshold, I set it at the **99th percentile of normal event scores**. This means only the most extreme 1% of normal-looking events get flagged. Reduces false positives significantly.
+
+### Results
+
+| Metric | Value |
+|---|---|
+| ROC-AUC | ~0.65 |
+| Best detected | wash_trader, brute_forcer |
+| Hardest to detect | structurer (subtle pattern) |
+
+ROC-AUC of 0.65 is expected on a 5000-event dataset. The mentor's reference used 50,000 events — more data gives better separation. The score distribution plot shows clear separation between normal and anomalous events especially for wash_trader and brute_forcer.
+
+### Saved artifacts
+Running `isolation_forest.py` saves three files to `models/saved/`:
+- `isolation_forest.pkl` — trained model
+- `if_scaler.pkl` — fitted StandardScaler
+- `if_threshold.pkl` — threshold value (p99 of normal scores)
+
+---
+
+## Week 7-8: LSTM Autoencoder
+
+### Why LSTM after Isolation Forest?
+Isolation Forest treats each event independently. It doesn't know what came before. So it can see that trade volume is high, but it can't see that this user had 7 failed logins, then logged in from a new country, then immediately placed a huge trade — that whole sequence tells a story that IF misses.
+
+LSTM looks at sequences of events, so it understands the pattern over time.
+
+### How the Autoencoder works
+The model is trained only on normal user sequences. It learns to compress a sequence of 10 events into a small vector (encoder) and then reconstruct the original sequence back from that vector (decoder).
+
+When a normal sequence comes in — the model reconstructs it well because it has seen this kind of pattern before. When an anomalous sequence comes in — the model can't reconstruct it well because it never learned that pattern. The reconstruction error (MSE) is high. High MSE = anomaly.
+
+### Architecture — `models/lstm_autoencoder.py`
+
+```
+Input sequence (10 events × 55 features)
+        ↓
+   LSTM Encoder  →  Latent vector (32 dimensions)
+        ↓
+   LSTM Decoder  →  Reconstructed sequence
+        ↓
+   MSE between input and reconstruction = anomaly score
+```
+
+Settings used:
+- Sequence length: 10 events per user
+- Hidden size: 64
+- Latent size: 32
+- Layers: 2
+- Epochs: 30
+- Trained on normal sequences only
+
+### Threshold
+Set at the 95th percentile of reconstruction errors on normal training sequences. Anything above this gets flagged as anomalous.
+
+### Saved artifacts
+- `lstm_autoencoder.pt` — model weights
+- `lstm_scaler.pkl` — fitted scaler
+- `lstm_threshold.pkl` — MSE threshold
+- `lstm_config.pkl` — model config (input size, hidden size etc.)
+
+---
+
+## Week 9: Streaming with Redpanda
+
+### What is streaming and why it matters
+In a real brokerage, events don't come as a CSV file — they come one by one in real time. A user logs in, that's one event. They place a trade, that's another. The system needs to score each event as it arrives, not after collecting everything.
+
+That's what the streaming pipeline does.
+
+### Setup
+Redpanda is a Kafka-compatible message broker. It runs locally via Docker:
+
+```bash
+docker compose up -d
+```
+
+This starts a single-node Redpanda broker and automatically creates the `anomx-events` topic.
+
+### Producer — `streaming/producer.py`
+Reads `features.csv` sorted by timestamp and publishes each event as a JSON message to the `anomx-events` topic. There's a 50ms delay between events to simulate real time. Uses `user_id` as the partition key so events from the same user always go to the same partition — this preserves per-user ordering.
+
+```bash
+python streaming/producer.py
+```
+
+### Consumer — `streaming/consumer.py`
+Subscribes to the `anomx-events` topic, passes each event to `ForexGuardScorer`, and prints a formatted alert whenever something is flagged. Normal events just show a dot so you can see it's running.
+
+```bash
+python streaming/consumer.py
+```
+
+### Config — `streaming/stream_config.py`
+Shared settings like broker address, topic name, and publish delay. Both producer and consumer import from here so there's no duplication.
+
+---
+
+## Week 10: FastAPI
+
+### What it does
+FastAPI turns the trained model into an API that any client can call. Instead of running a Python script manually, you send an HTTP request and get back a JSON response with the anomaly verdict.
+
+### Files
+
+**`models/scorer.py` — ForexGuardScorer**
+This is the core class that handles everything. It loads the trained model at startup, takes an event as a dict, builds the feature vector, scales it, runs it through the model, and returns the result. Used by both the API and the consumer.
+
+**`api/schemas.py` — Pydantic models**
+Defines what a valid request looks like. All 55 features are listed with their types. FastAPI uses this to automatically validate incoming requests — if you send wrong data types it returns a 422 error before the model even runs.
+
+**`api/main.py` — FastAPI app**
+Two endpoints:
+
+- `GET /health` — checks if server is up and model is loaded
+- `POST /score` — takes an event, returns anomaly score and verdict
+
+Model is loaded once at startup, not on every request.
+
+### Running it
+
+```bash
+uvicorn api.main:app --reload
+```
+
+Docs available at `http://localhost:8000/docs` — you can test the API directly from the browser without writing any code.
+
+### Example response
+
+```json
+{
+  "user_id": "USER_0007",
+  "event_type": "trade",
+  "anomaly_score": 0.08432,
+  "is_anomaly": true,
+  "severity": "CRITICAL",
+  "verdict": "🚨 ANOMALY",
+  "reasons": [
+    "Trade volume far above user's normal",
+    "Unusually large trade volume",
+    "Abnormal profit/loss pattern"
+  ],
+  "top_features": [
+    {"feature": "trade_vol_zscore", "raw_value": 8.4, "scaled_value": 6.21},
+    {"feature": "roll_5_trade_vol_mean", "raw_value": 160000.0, "scaled_value": 5.87}
+  ]
+}
+```
+
+### Severity levels
+
+| Severity | Score threshold |
+|---|---|
+| CRITICAL | > 0.06 |
+| HIGH | > 0.03 |
+| MEDIUM | > 0.01 |
+| LOW | ≤ 0.01 |
+
+Thresholds are based on the percentile distribution of training anomaly scores — not arbitrary numbers.
+
+### Testing — `api/test_client.py`
+Runs 5 test cases covering a normal deposit and all major anomaly types. Shows the contrast between a normal event returning `✅ NORMAL` and a wash trader returning `🚨 ANOMALY CRITICAL`.
+
+```bash
+python api/test_client.py
+```
+
+---
+
+## How to run everything
+
+```bash
+# 1. install dependencies
+pip install -r requirements.txt
+
+# 2. generate data
+python "Week - 3/generate_events.py"
+
+# 3. run feature engineering
+python "Week - 4/feature_engineering.py"
+
+# 4. train model
+python models/isolation_forest.py
+
+# 5. start API
+uvicorn api.main:app --reload
+
+# 6. test API
+python api/test_client.py
+
+# 7. streaming (needs Docker)
+docker compose up -d
+python streaming/producer.py   # terminal 1
+python streaming/consumer.py   # terminal 2
+```
+
+---
+
+*👨‍💻 Mentor: Sugandh Kumar, IIT Bombay | SoC 2026*
