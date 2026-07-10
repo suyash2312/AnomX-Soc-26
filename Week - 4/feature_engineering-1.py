@@ -288,7 +288,7 @@ def run_feature_pipeline():
     df.to_csv(OUT_PATH, index=False)
 
     print(f"\n{'='*55}")
-    print(f"✅ Features saved to : {OUT_PATH}")
+    print(f" Features saved to : {OUT_PATH}")
     print(f"   Original columns  : {len(orig_cols)}")
     print(f"   New columns added : {len(new_cols)}")
     print(f"   Total columns     : {len(df.columns)}")
