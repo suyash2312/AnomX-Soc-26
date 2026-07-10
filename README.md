@@ -1,4 +1,4 @@
-# AnomX - Midterm Submission
+# AnomX - Endterm Submission
 **Seasons of Code 2026 | Suyash Jagtap**
 
 ---
