@@ -3,7 +3,6 @@ import numpy as np
 from datetime import datetime, timedelta
 import random
 
-# import yaml
 from pathlib import Path
 
 SEED = 42
@@ -100,9 +99,6 @@ def build_user_profiles():
     return profiles
 
 
-# ── Base event skeleton ───────────────────────────────────────────────────────
-
-
 def base_event(user_id, ts):
     return {
         "event_id": event_id(),
@@ -114,45 +110,33 @@ def base_event(user_id, ts):
         "is_weekend": int(ts.weekday() >= 5),
         "is_anomalous": 0,
         "anomaly_type": "none",
-        # ── Login fields ──────────────────────────────────────────────────────
         "ip_address": None,
         "country": None,
         "device": None,
         "login_success": None,
         "failed_attempts": None,
         "timezone_gap_hours": None,
-        # ── Trade fields ──────────────────────────────────────────────────────
         "instrument": None,
         "lot_size": None,
         "trade_volume": None,
         "pnl": None,
         "margin_used": None,
         "trade_duration_seconds": None,
-        "trade_volume_vs_baseline": None,  # actual_vol / user's typical_vol; >5x = red flag
-        "is_night_trade": None,  # 1 if trade placed between midnight and 5 AM local
-        # ── Deposit / withdrawal fields ───────────────────────────────────────
+        "trade_volume_vs_baseline": None,
+        "is_night_trade": None,
         "amount": None,
         "method": None,
-        "is_immediate_withdrawal": None,  # 1 if withdrawal follows deposit within hours
-        # ── Session fields ────────────────────────────────────────────────────
+        "is_immediate_withdrawal": None,
         "session_duration_mins": None,
         "page_clicks": None,
-        "click_rate_per_min": None,  # clicks/min; >200 strongly suggests a bot
-        # ── KYC fields ───────────────────────────────────────────────────────
+        "click_rate_per_min": None,
         "kyc_change_type": None,
-        # ── Account context ───────────────────────────────────────────────────
         "account_age_days": None,
     }
 
 
 def generate_normal_event(user_id, profile, ts=None):
-    """
-    Generate one random normal event for a user.
 
-    Event type is sampled from EVENT_TYPES using EVENT_WEIGHTS so the
-    distribution matches realistic platform usage (trades most frequent,
-    kyc_change rare). All values stay close to the user's baseline profile.
-    """
     if ts is None:
         ts = random_timestamp()
 
@@ -239,11 +223,7 @@ def generate_normal_event(user_id, profile, ts=None):
 
 
 def events_ip_hopper(user_id, profile):
-    """
-    Rapid logins from many different countries within minutes of each other.
-    Key signals: high timezone_gap_hours, new IP + country on every login,
-    impossible travel speed between login locations.
-    """
+
     events = []
     base_ts = random_timestamp()
     n = random.randint(6, 10)
@@ -275,11 +255,7 @@ def events_ip_hopper(user_id, profile):
 
 
 def events_wash_trader(user_id, profile):
-    """
-    Trade volume 10-20x the user's baseline, always profitable, very fast execution.
-    Key signals: trade_volume_vs_baseline >> 1, consistently positive pnl,
-    trade_duration_seconds very low (sub-30s), single instrument.
-    """
+
     events = []
     base_ts = random_timestamp()
     vol = profile["typical_trade_vol"]
@@ -314,12 +290,7 @@ def events_wash_trader(user_id, profile):
 
 
 def events_deposit_withdrawal_cycler(user_id, profile):
-    """
-    Deposit followed by withdrawal of nearly the same amount within hours.
-    Classic money-laundering layering pattern — funds enter and exit rapidly.
-    Key signals: is_immediate_withdrawal=1, deposit and withdrawal amounts close,
-    method is crypto (harder to trace).
-    """
+
     events = []
     base_ts = random_timestamp()
     n = random.randint(3, 5)  # repeat the cycle multiple times
@@ -362,11 +333,7 @@ def events_deposit_withdrawal_cycler(user_id, profile):
 
 
 def events_bot_trader(user_id, profile):
-    """
-    Sessions with inhuman click rates (300-800 clicks/min) at odd hours (2-4 AM).
-    Key signals: click_rate_per_min far exceeds human capability (~5-10/min),
-    very short session_duration_mins, always active at night.
-    """
+
     events = []
     base_ts = random_timestamp()
     base_ts = base_ts.replace(hour=random.randint(2, 4), minute=0)
@@ -395,11 +362,7 @@ def events_bot_trader(user_id, profile):
 
 
 def events_structurer(user_id, profile):
-    """
-    Many deposits just under $1000 — classic smurfing / structuring pattern
-    used to avoid AML (anti-money-laundering) reporting thresholds.
-    Key signal: many deposits with amount in 490-999 range over short time.
-    """
+
     events = []
     base_ts = random_timestamp()
     n = random.randint(10, 15)
@@ -424,10 +387,7 @@ def events_structurer(user_id, profile):
 
 
 def events_brute_forcer(user_id, profile):
-    """
-    Several failed logins in rapid succession (every 30s), then one success.
-    Key signals: escalating failed_attempts, multiple countries, short time window.
-    """
+
     events = []
     base_ts = random_timestamp()
     n_fails = random.randint(4, 8)
@@ -479,11 +439,7 @@ def events_brute_forcer(user_id, profile):
 
 
 def events_dormant_withdrawer(user_id, profile):
-    """
-    Account stays quiet for a long time then suddenly makes large withdrawals.
-    Key signal: account_age_days very high, no prior activity, large amount.
-    Often indicates a compromised dormant account.
-    """
+
     events = []
     # Force events near the end of the dataset window (after long dormancy)
     base_ts = END_DATE - timedelta(days=random.randint(1, 5))

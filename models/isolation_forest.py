@@ -1,16 +1,3 @@
-# models/isolation_forest.py
-#
-# Trains an Isolation Forest on the engineered features from Week 4.
-# Saves the trained model and scaler so they can be loaded by the API later.
-#
-# Run this from the project root:
-#   python models/isolation_forest.py
-#
-# Output:
-#   models/saved/isolation_forest.pkl   — trained IF model
-#   models/saved/if_scaler.pkl          — fitted StandardScaler
-#   models/saved/if_threshold.pkl       — anomaly score threshold
-
 import pandas as pd
 import numpy as np
 import joblib
@@ -23,23 +10,29 @@ from sklearn.metrics import (
     confusion_matrix,
     roc_auc_score,
     average_precision_score,
-    ConfusionMatrixDisplay
+    ConfusionMatrixDisplay,
 )
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-BASE_DIR   = Path(__file__).parent
-DATA_PATH  = BASE_DIR.parent / "Week - 4" / "data" / "features.csv"
-SAVE_DIR   = BASE_DIR / "saved"
+# Paths
+BASE_DIR = Path(__file__).parent
+DATA_PATH = BASE_DIR.parent / "Week - 4" / "data" / "features.csv"
+SAVE_DIR = BASE_DIR / "saved"
 SAVE_DIR.mkdir(exist_ok=True)
 
-# ── Columns to drop before training ───────────────────────────────────────────
-# These are identifiers or labels — the model should never see them
+
 DROP_COLS = [
-    "event_id", "user_id", "timestamp",
-    "event_type", "ip_address", "country",
-    "device", "method", "instrument",
-    "kyc_change_type", "anomaly_type",
-    "is_anomalous"   # this is the label, obviously drop it
+    "event_id",
+    "user_id",
+    "timestamp",
+    "event_type",
+    "ip_address",
+    "country",
+    "device",
+    "method",
+    "instrument",
+    "kyc_change_type",
+    "anomaly_type",
+    "is_anomalous",
 ]
 
 
@@ -55,14 +48,11 @@ def prepare_features(df):
     Drop non-numeric and identifier columns.
     Keep only the engineered numeric features for training.
     """
-    # save the label before dropping
     y = df["is_anomalous"].values
 
-    # drop all non-feature columns
     drop = [c for c in DROP_COLS if c in df.columns]
     X = df.drop(columns=drop)
 
-    # drop any remaining non-numeric columns just in case
     X = X.select_dtypes(include=[np.number])
 
     print(f"  Features used for training: {X.shape[1]}")
@@ -84,17 +74,11 @@ def train(X, contamination=0.15):
     print(f"  contamination = {contamination}")
     print(f"  n_estimators  = 200")
 
-    # scale features first — IF doesn't strictly need this but helps
-    # when features are on very different scales (e.g. trade_volume in thousands
-    # vs is_weekend which is 0/1)
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
     model = IsolationForest(
-        n_estimators=200,
-        contamination=contamination,
-        random_state=42,
-        n_jobs=-1       # use all CPU cores
+        n_estimators=200, contamination=contamination, random_state=42, n_jobs=-1
     )
     model.fit(X_scaled)
 
@@ -108,25 +92,20 @@ def evaluate(model, scaler, X_scaled, y, X):
     """
     print("\nEvaluating...")
 
-    # predict: IF returns +1 (normal) or -1 (anomaly)
-    # convert to 0/1 to match our is_anomalous label
     preds_raw = model.predict(X_scaled)
-    preds     = np.where(preds_raw == -1, 1, 0)
+    preds = np.where(preds_raw == -1, 1, 0)
 
-    # anomaly scores — more negative = more anomalous in sklearn IF
-    # flip sign so higher score = more anomalous (easier to reason about)
     scores = -model.decision_function(X_scaled)
 
     print("\n── Classification Report ─────────────────────────────")
     print(classification_report(y, preds, target_names=["normal", "anomalous"]))
 
-    roc   = roc_auc_score(y, scores)
-    ap    = average_precision_score(y, scores)
+    roc = roc_auc_score(y, scores)
+    ap = average_precision_score(y, scores)
     print(f"ROC-AUC           : {roc:.4f}")
     print(f"Average Precision  : {ap:.4f}")
 
-    # confusion matrix
-    cm  = confusion_matrix(y, preds)
+    cm = confusion_matrix(y, preds)
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     ConfusionMatrixDisplay(cm, display_labels=["normal", "anomalous"]).plot(
@@ -134,8 +113,7 @@ def evaluate(model, scaler, X_scaled, y, X):
     )
     axes[0].set_title("Confusion Matrix")
 
-    # score distribution — shows separation between normal and anomalous
-    axes[1].hist(scores[y == 0], bins=60, alpha=0.6, label="Normal",    color="steelblue")
+    axes[1].hist(scores[y == 0], bins=60, alpha=0.6, label="Normal", color="steelblue")
     axes[1].hist(scores[y == 1], bins=60, alpha=0.6, label="Anomalous", color="tomato")
     axes[1].set_xlabel("Anomaly Score (higher = more suspicious)")
     axes[1].set_ylabel("Count")
@@ -148,9 +126,8 @@ def evaluate(model, scaler, X_scaled, y, X):
     print(f"\nEvaluation plot saved to {plot_path}")
     plt.close()
 
-    # print per-anomaly-type breakdown — useful to see which types the model catches
     print("\n── Score by Anomaly Type ─────────────────────────────")
-    # we need original df for this — pass scores back and handle outside
+
     return scores, preds, roc, ap
 
 
@@ -160,16 +137,11 @@ def save_artifacts(model, scaler, scores, y):
     Threshold is set at the 80th percentile of normal event scores.
     Anything above this is flagged as anomalous.
     """
-    # threshold: 80th percentile of normal scores
-    # meaning: flag the top 20% of normal-looking events as suspicious
-    # adjust this up if getting too many false positives
-    # p99 of normal scores — only the most extreme 1% of normal events get flagged
-    # lower this if you want more sensitivity (catches more but more false positives)
-    # raise this further if you are getting too many false positives
+
     threshold = float(np.percentile(scores[y == 0], 99))
 
-    joblib.dump(model,     SAVE_DIR / "isolation_forest.pkl")
-    joblib.dump(scaler,    SAVE_DIR / "if_scaler.pkl")
+    joblib.dump(model, SAVE_DIR / "isolation_forest.pkl")
+    joblib.dump(scaler, SAVE_DIR / "if_scaler.pkl")
     joblib.dump(threshold, SAVE_DIR / "if_threshold.pkl")
 
     print(f"\n── Saved Artifacts ───────────────────────────────────")
@@ -192,10 +164,10 @@ def score_breakdown(df, scores):
 
 
 def run():
-    df      = load_features(DATA_PATH)
-    X, y    = prepare_features(df)
+    df = load_features(DATA_PATH)
+    X, y = prepare_features(df)
     model, scaler, X_scaled = train(X, contamination=0.15)
-    scores, preds, roc, ap  = evaluate(model, scaler, X_scaled, y, X)
+    scores, preds, roc, ap = evaluate(model, scaler, X_scaled, y, X)
     score_breakdown(df, scores)
     save_artifacts(model, scaler, scores, y)
 

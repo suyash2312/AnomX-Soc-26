@@ -1,33 +1,12 @@
-# models/lstm_autoencoder.py
-#
-# LSTM Autoencoder for sequence-based anomaly detection.
-# Week 7-8 implementation.
-#
-# How it works:
-#   - Trained ONLY on normal user sequences (unsupervised)
-#   - Encoder compresses a sequence of 10 events into a latent vector
-#   - Decoder tries to reconstruct the original sequence from that vector
-#   - At inference time: high reconstruction error (MSE) = anomaly
-#     because the model never saw that pattern during training
-#
-# Why LSTM over Isolation Forest:
-#   - IF treats each event independently — it doesn't know what came before
-#   - LSTM sees the sequence of events — it knows that 7 failed logins
-#     followed by a login from a new country is suspicious as a PATTERN
-#     not just as individual events
-#
-# Run:
-#   python models/lstm_autoencoder.py
-
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
-# ── Check PyTorch is available ─────────────────────────────────────────────────
 try:
     import torch
     import torch.nn as nn
     from torch.utils.data import DataLoader, TensorDataset
+
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
@@ -37,33 +16,36 @@ except ImportError:
 import joblib
 from sklearn.preprocessing import StandardScaler
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-BASE_DIR  = Path(__file__).parent
+BASE_DIR = Path(__file__).parent
 DATA_PATH = BASE_DIR.parent / "Week - 4" / "data" / "features.csv"
-SAVE_DIR  = BASE_DIR / "saved"
+SAVE_DIR = BASE_DIR / "saved"
 SAVE_DIR.mkdir(exist_ok=True)
 
-# ── Config ────────────────────────────────────────────────────────────────────
-SEQUENCE_LEN = 10      # number of events per sequence
-HIDDEN_SIZE  = 64      # LSTM hidden state size
-LATENT_SIZE  = 32      # bottleneck / latent vector size
-NUM_LAYERS   = 2       # stacked LSTM layers
-EPOCHS       = 30
-BATCH_SIZE   = 64
+SEQUENCE_LEN = 10
+HIDDEN_SIZE = 64
+LATENT_SIZE = 32
+NUM_LAYERS = 2
+EPOCHS = 30
+BATCH_SIZE = 64
 LEARNING_RATE = 1e-3
-THRESHOLD_PERCENTILE = 95   # flag events above this percentile of training MSE
+THRESHOLD_PERCENTILE = 95
 
-# columns to drop before training (same as isolation_forest.py)
+
 DROP_COLS = [
-    "event_id", "user_id", "timestamp",
-    "event_type", "ip_address", "country",
-    "device", "method", "instrument",
-    "kyc_change_type", "anomaly_type",
-    "is_anomalous"
+    "event_id",
+    "user_id",
+    "timestamp",
+    "event_type",
+    "ip_address",
+    "country",
+    "device",
+    "method",
+    "instrument",
+    "kyc_change_type",
+    "anomaly_type",
+    "is_anomalous",
 ]
 
-
-# ── Model Architecture ────────────────────────────────────────────────────────
 
 class LSTMEncoder(nn.Module):
     """
@@ -71,6 +53,7 @@ class LSTMEncoder(nn.Module):
     Takes input of shape (batch, seq_len, n_features)
     Returns latent vector of shape (batch, latent_size)
     """
+
     def __init__(self, input_size, hidden_size, latent_size, num_layers):
         super().__init__()
         self.lstm = nn.LSTM(
@@ -78,68 +61,56 @@ class LSTMEncoder(nn.Module):
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
-            dropout=0.2 if num_layers > 1 else 0.0
+            dropout=0.2 if num_layers > 1 else 0.0,
         )
-        # compress hidden state to latent vector
+
         self.fc = nn.Linear(hidden_size, latent_size)
 
     def forward(self, x):
-        # out: (batch, seq_len, hidden_size)
-        # h_n: (num_layers, batch, hidden_size)
         _, (h_n, _) = self.lstm(x)
-        # take last layer's hidden state
-        last_hidden = h_n[-1]                    # (batch, hidden_size)
-        latent      = self.fc(last_hidden)       # (batch, latent_size)
+        last_hidden = h_n[-1]
+        latent = self.fc(last_hidden)
         return latent
 
 
 class LSTMDecoder(nn.Module):
-    """
-    Reconstructs the original sequence from the latent vector.
-    Takes latent vector of shape (batch, latent_size)
-    Returns reconstructed sequence of shape (batch, seq_len, n_features)
-    """
     def __init__(self, latent_size, hidden_size, output_size, num_layers, seq_len):
         super().__init__()
         self.seq_len = seq_len
-        # expand latent back to hidden size
-        self.fc   = nn.Linear(latent_size, hidden_size)
+
+        self.fc = nn.Linear(latent_size, hidden_size)
         self.lstm = nn.LSTM(
             input_size=hidden_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
-            dropout=0.2 if num_layers > 1 else 0.0
+            dropout=0.2 if num_layers > 1 else 0.0,
         )
-        # project hidden state back to original feature size
+
         self.output_layer = nn.Linear(hidden_size, output_size)
 
     def forward(self, latent):
-        # expand latent to (batch, seq_len, hidden_size)
-        h = self.fc(latent)                              # (batch, hidden_size)
-        h = h.unsqueeze(1).repeat(1, self.seq_len, 1)   # (batch, seq_len, hidden_size)
-        out, _ = self.lstm(h)                            # (batch, seq_len, hidden_size)
-        reconstructed = self.output_layer(out)           # (batch, seq_len, n_features)
+        h = self.fc(latent)
+        h = h.unsqueeze(1).repeat(1, self.seq_len, 1)
+        out, _ = self.lstm(h)
+        reconstructed = self.output_layer(out)
         return reconstructed
 
 
 class LSTMAutoencoder(nn.Module):
-    """
-    Full LSTM Autoencoder: Encoder → Latent → Decoder
-    Anomaly score = MSE between input sequence and reconstructed sequence
-    """
+
     def __init__(self, input_size, hidden_size, latent_size, num_layers, seq_len):
         super().__init__()
         self.encoder = LSTMEncoder(input_size, hidden_size, latent_size, num_layers)
-        self.decoder = LSTMDecoder(latent_size, hidden_size, input_size, num_layers, seq_len)
+        self.decoder = LSTMDecoder(
+            latent_size, hidden_size, input_size, num_layers, seq_len
+        )
 
     def forward(self, x):
-        latent        = self.encoder(x)
+        latent = self.encoder(x)
         reconstructed = self.decoder(latent)
         return reconstructed
 
-
-# ── Data preparation ──────────────────────────────────────────────────────────
 
 def load_and_prepare(path):
     print(f"Loading data from {path}...")
@@ -147,42 +118,34 @@ def load_and_prepare(path):
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df = df.sort_values(["user_id", "timestamp"]).reset_index(drop=True)
 
-    y    = df["is_anomalous"].values
+    y = df["is_anomalous"].values
     user = df["user_id"].values
 
     drop = [c for c in DROP_COLS if c in df.columns]
-    X    = df.drop(columns=drop).select_dtypes(include=[np.number])
+    X = df.drop(columns=drop).select_dtypes(include=[np.number])
 
     print(f"  Shape: {df.shape}  |  Features: {X.shape[1]}")
     return X.values, y, user, list(X.columns)
 
 
 def build_sequences(X, y, user_ids, seq_len):
-    """
-    Build sequences of seq_len consecutive events per user.
-    Only uses NORMAL events for training (unsupervised approach).
-    Returns sequences and their labels.
-    """
+
     sequences = []
-    labels    = []
+    labels = []
 
     for uid in np.unique(user_ids):
-        mask    = user_ids == uid
-        X_user  = X[mask]
-        y_user  = y[mask]
+        mask = user_ids == uid
+        X_user = X[mask]
+        y_user = y[mask]
 
-        # build sliding window sequences
         for i in range(len(X_user) - seq_len + 1):
-            seq     = X_user[i: i + seq_len]
-            # label = 1 if ANY event in the window is anomalous
-            seq_lbl = int(y_user[i: i + seq_len].any())
+            seq = X_user[i : i + seq_len]
+            seq_lbl = int(y_user[i : i + seq_len].any())
             sequences.append(seq)
             labels.append(seq_lbl)
 
     return np.array(sequences, dtype=np.float32), np.array(labels)
 
-
-# ── Training ──────────────────────────────────────────────────────────────────
 
 def train(model, train_loader, optimizer, criterion, device):
     model.train()
@@ -204,14 +167,15 @@ def compute_mse(model, sequences, device, batch_size=128):
     all_mse = []
     with torch.no_grad():
         for i in range(0, len(sequences), batch_size):
-            batch = torch.tensor(sequences[i: i + batch_size]).to(device)
+            batch = torch.tensor(sequences[i : i + batch_size]).to(device)
             reconstructed = model(batch)
             mse = ((batch - reconstructed) ** 2).mean(dim=(1, 2))
             all_mse.extend(mse.cpu().numpy())
     return np.array(all_mse)
 
 
-# ── Main pipeline ─────────────────────────────────────────────────────────────
+#  Main pipeline
+
 
 def run():
     if not TORCH_AVAILABLE:
@@ -225,7 +189,7 @@ def run():
     X, y, user_ids, feature_names = load_and_prepare(DATA_PATH)
 
     # scale features
-    scaler  = StandardScaler()
+    scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
     # build sequences
@@ -235,15 +199,12 @@ def run():
     print(f"  Normal sequences : {(seq_labels == 0).sum()}")
     print(f"  Anomaly sequences: {(seq_labels == 1).sum()}")
 
-    # train only on normal sequences — key to unsupervised anomaly detection
     normal_seqs = sequences[seq_labels == 0]
     print(f"\nTraining on {len(normal_seqs)} normal sequences only...")
 
     train_tensor = torch.tensor(normal_seqs, dtype=torch.float32)
     train_loader = DataLoader(
-        TensorDataset(train_tensor),
-        batch_size=BATCH_SIZE,
-        shuffle=True
+        TensorDataset(train_tensor), batch_size=BATCH_SIZE, shuffle=True
     )
 
     # model
@@ -253,7 +214,7 @@ def run():
         hidden_size=HIDDEN_SIZE,
         latent_size=LATENT_SIZE,
         num_layers=NUM_LAYERS,
-        seq_len=SEQUENCE_LEN
+        seq_len=SEQUENCE_LEN,
     ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
@@ -266,35 +227,37 @@ def run():
         if epoch % 5 == 0 or epoch == 1:
             print(f"  Epoch {epoch:3d}/{EPOCHS}  |  loss: {loss:.6f}")
 
-    # compute reconstruction errors on all sequences
     print("\nComputing reconstruction errors...")
     all_mse = compute_mse(model, sequences, device)
 
-    # threshold = percentile of normal sequence errors
     normal_mse = all_mse[seq_labels == 0]
-    threshold  = float(np.percentile(normal_mse, THRESHOLD_PERCENTILE))
+    threshold = float(np.percentile(normal_mse, THRESHOLD_PERCENTILE))
     print(f"  Threshold (p{THRESHOLD_PERCENTILE} of normal MSE): {threshold:.6f}")
 
-    # quick evaluation
     preds = (all_mse > threshold).astype(int)
     from sklearn.metrics import roc_auc_score, classification_report
+
     roc = roc_auc_score(seq_labels, all_mse)
     print(f"  ROC-AUC: {roc:.4f}")
     print()
-    print(classification_report(seq_labels, preds, target_names=["normal", "anomalous"]))
+    print(
+        classification_report(seq_labels, preds, target_names=["normal", "anomalous"])
+    )
 
-    # save artifacts
     torch.save(model.state_dict(), SAVE_DIR / "lstm_autoencoder.pt")
-    joblib.dump(scaler,    SAVE_DIR / "lstm_scaler.pkl")
+    joblib.dump(scaler, SAVE_DIR / "lstm_scaler.pkl")
     joblib.dump(threshold, SAVE_DIR / "lstm_threshold.pkl")
-    joblib.dump({
-        "input_size"  : input_size,
-        "hidden_size" : HIDDEN_SIZE,
-        "latent_size" : LATENT_SIZE,
-        "num_layers"  : NUM_LAYERS,
-        "seq_len"     : SEQUENCE_LEN,
-        "feature_names": feature_names,
-    }, SAVE_DIR / "lstm_config.pkl")
+    joblib.dump(
+        {
+            "input_size": input_size,
+            "hidden_size": HIDDEN_SIZE,
+            "latent_size": LATENT_SIZE,
+            "num_layers": NUM_LAYERS,
+            "seq_len": SEQUENCE_LEN,
+            "feature_names": feature_names,
+        },
+        SAVE_DIR / "lstm_config.pkl",
+    )
 
     print(f"✅ Saved to {SAVE_DIR}/")
     print(f"   lstm_autoencoder.pt")
