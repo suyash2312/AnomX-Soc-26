@@ -1,5 +1,5 @@
 # AnomX - Endterm Submission
-**Seasons of Code 2026 | Suyash Jagtap**
+**Seasons of Code 2026 | Suyash Jagtap (24b1251)**
 
 ---
 Video Link : https://drive.google.com/file/d/1v3OgduzZ0G1e0YkNZr6CwSUBE-CzJpN9/view?usp=sharing
