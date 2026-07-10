@@ -1,12 +1,3 @@
-# api/test_client.py
-#
-# Simple script to test the FastAPI endpoints.
-# Run the server first:
-#   uvicorn api.main:app --reload
-#
-# Then in another terminal:
-#   python api/test_client.py
-
 import requests
 import json
 
