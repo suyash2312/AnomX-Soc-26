@@ -13,10 +13,26 @@ AnomX-SoC-26/
 │   ├── generate_events.py
 │   └── data/
 │       └── events.csv
-└── Week - 4/
-    ├── feature_engineering.py
-    └── data/
-        └── features.csv
+├── Week - 4/
+|    ├── feature_engineering.py
+|    └── data/
+|        └── features.csv
+├── Week - 5,6/
+|    ├── week-5,6_report.pdf
+├── api/
+|    ├── __init__.py
+|    └── main.py
+|    └── schemas.py
+|    └── test_client.py
+├── models/
+|    ├── saved/
+|    └── isolation_forest.py
+|    └── lstm_encoder.py
+|    └── scorer.py
+├── streaming/
+|   ├── consumer.py
+|   └── producer.py
+|   └── stream_config.py
 ├── README.md
 ```
 
