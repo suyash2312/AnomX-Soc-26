@@ -408,4 +408,4 @@ python streaming/consumer.py   # terminal 2
 
 ---
 
-*👨‍💻 Mentor: Sugandh Kumar, IIT Bombay | SoC 2026*
+* Mentor: Sugandh Kumar | SoC 2026*
